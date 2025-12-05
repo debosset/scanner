@@ -23,7 +23,7 @@ TEMPLATE = """
 <html lang="fr">
 <head>
   <meta charset="utf-8">
-  <title>Scanner Dashboard - Optimized</title>
+  <title>Scanner Dashboard</title>
   <meta name="viewport" content="width=device-width, initial-scale=1">
 
   <!-- Tailwind CSS -->
@@ -46,13 +46,11 @@ TEMPLATE = """
 
     <!-- HEADER -->
     <header class="space-y-1">
-      <h1 class="text-3xl font-bold">🚀 Scanner Dashboard - OPTIMIZED</h1>
+      <h1 class="text-3xl font-bold">Scanner Dashboard</h1>
       <p class="text-sm text-slate-400">
         Generator (ETH+BTC random) &amp; Bitcoin Puzzle #71 &mdash; auto-refresh toutes les 5s.
       </p>
-      <p class="text-xs text-emerald-400">
-        ✨ Version optimisée : 10-15x plus rapide avec monitoring complet
-      </p>
+     
     </header>
 
     <!-- GLOBAL SUMMARY -->
