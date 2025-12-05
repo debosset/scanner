@@ -3,6 +3,13 @@ import json
 import time
 import os
 
+# psutil pour CPU/RAM/temp
+try:
+    import psutil
+    PSUTIL_AVAILABLE = True
+except ImportError:
+    PSUTIL_AVAILABLE = False
+
 app = Flask(__name__)
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -10,8 +17,6 @@ PARENT_DIR = os.path.dirname(BASE_DIR)
 
 GEN_STATUS = os.path.join(PARENT_DIR, "generator", "status.json")
 PUZ_STATUS = os.path.join(PARENT_DIR, "puzzleweb", "status.json")
-
-
 
 TEMPLATE = """
 <!doctype html>
@@ -45,7 +50,6 @@ TEMPLATE = """
       <p class="text-sm text-slate-400">
         Generator (ETH+BTC random) &amp; Bitcoin Puzzle #71 &mdash; auto-refresh toutes les 5s.
       </p>
-     
     </header>
 
     <!-- GLOBAL SUMMARY -->
@@ -54,21 +58,53 @@ TEMPLATE = """
         <div>
           <h2 class="text-lg font-semibold">Vue d'ensemble</h2>
           <p class="text-xs text-slate-400">
-            Total global de clés testées (generator + puzzle) et vitesses actuelles.
+            Total global, vitesses (actuelle / moyenne / pic) et état système.
           </p>
         </div>
-        <div class="grid grid-cols-1 sm:grid-cols-3 gap-3 text-sm">
+        <div class="grid grid-cols-1 sm:grid-cols-3 lg:grid-cols-4 gap-3 text-sm w-full md:w-auto">
+          <!-- TOTAL GLOBAL -->
           <div class="bg-slate-900/60 rounded-xl px-3 py-2">
             <div class="text-xs text-slate-400">Total global de clés</div>
             <div id="global-total-keys" class="font-mono text-lg">-</div>
           </div>
+
+          <!-- GENERATOR SPEEDS -->
           <div class="bg-slate-900/60 rounded-xl px-3 py-2">
-            <div class="text-xs text-slate-400">Vitesse Generator</div>
-            <div id="global-speed-gen" class="font-mono text-lg">-</div>
+            <div class="text-xs text-slate-400 mb-1">Generator speed</div>
+            <div class="text-[11px] space-y-0.5">
+              <div><span class="text-slate-500">Actuel :</span>
+                   <span id="global-speed-gen-current" class="font-mono">-</span></div>
+              <div><span class="text-slate-500">Moyenne :</span>
+                   <span id="global-speed-gen-avg" class="font-mono">-</span></div>
+              <div><span class="text-slate-500">Pic :</span>
+                   <span id="global-speed-gen-peak" class="font-mono">-</span></div>
+            </div>
           </div>
+
+          <!-- PUZZLE SPEEDS -->
           <div class="bg-slate-900/60 rounded-xl px-3 py-2">
-            <div class="text-xs text-slate-400">Vitesse Puzzle</div>
-            <div id="global-speed-puz" class="font-mono text-lg">-</div>
+            <div class="text-xs text-slate-400 mb-1">Puzzle speed</div>
+            <div class="text-[11px] space-y-0.5">
+              <div><span class="text-slate-500">Actuel :</span>
+                   <span id="global-speed-puz-current" class="font-mono">-</span></div>
+              <div><span class="text-slate-500">Moyenne :</span>
+                   <span id="global-speed-puz-avg" class="font-mono">-</span></div>
+              <div><span class="text-slate-500">Pic :</span>
+                   <span id="global-speed-puz-peak" class="font-mono">-</span></div>
+            </div>
+          </div>
+
+          <!-- SYSTEM INFO -->
+          <div class="bg-slate-900/60 rounded-xl px-3 py-2">
+            <div class="text-xs text-slate-400 mb-1">Système</div>
+            <div class="text-[11px] space-y-0.5">
+              <div><span class="text-slate-500">CPU :</span>
+                   <span id="sys-cpu" class="font-mono">-</span></div>
+              <div><span class="text-slate-500">RAM :</span>
+                   <span id="sys-ram" class="font-mono">-</span></div>
+              <div><span class="text-slate-500">Temp :</span>
+                   <span id="sys-temp" class="font-mono">-</span></div>
+            </div>
           </div>
         </div>
       </div>
@@ -135,43 +171,6 @@ TEMPLATE = """
       </div>
     </section>
 
-    <!-- PUZZLE RANGE + COVERAGE -->
-    <section class="bg-slate-800 rounded-2xl p-5 shadow-lg">
-      <div class="flex justify-between items-center mb-2">
-        <h2 class="text-xl font-semibold">Position & couverture du range Puzzle</h2>
-        <span id="puz-range-pos-text" class="text-xs text-slate-300">-</span>
-      </div>
-      <p class="text-xs text-slate-400 mb-3">
-        La barre représente le range complet (min → max). Le curseur indique la position de la dernière clé testée.
-      </p>
-      <div class="w-full h-4 bg-slate-700 rounded-full relative overflow-hidden mb-1">
-        <div class="absolute inset-0 bg-gradient-to-r from-slate-700 via-slate-600 to-slate-700 opacity-70"></div>
-        <div id="puz-range-marker"
-             class="absolute top-0 h-4 w-1.5 bg-cyan-400 rounded-full shadow-[0_0_10px_rgba(34,211,238,0.9)]"
-             style="left: 0%;">
-        </div>
-      </div>
-      <div class="flex justify-between text-[10px] text-slate-500 mb-2">
-        <span id="puz-range-min">min</span>
-        <span id="puz-range-max">max</span>
-      </div>
-
-      <div class="grid grid-cols-1 md:grid-cols-3 gap-3 text-xs mt-3">
-        <div class="bg-slate-900/60 rounded-xl px-3 py-2">
-          <div class="text-slate-400">Couverture session</div>
-          <div id="puz-coverage-session" class="font-mono text-sm">-</div>
-        </div>
-        <div class="bg-slate-900/60 rounded-xl px-3 py-2">
-          <div class="text-slate-400">Couverture globale</div>
-          <div id="puz-coverage-global" class="font-mono text-sm">-</div>
-        </div>
-        <div class="bg-slate-900/60 rounded-xl px-3 py-2">
-          <div class="text-slate-400">ETA (100% du range)</div>
-          <div id="puz-eta-full" class="font-mono text-sm">-</div>
-        </div>
-      </div>
-    </section>
-
     <!-- SPEED HISTORY CHART -->
     <section class="bg-slate-800 rounded-2xl p-5 shadow-lg">
       <div class="flex justify-between items-center mb-3">
@@ -184,7 +183,7 @@ TEMPLATE = """
     </section>
 
     <footer class="text-xs text-slate-500 text-center pt-4">
-      Dashboard temps réel optimisé. Version 2.0 avec monitoring complet.
+      Dashboard temps réel optimisé. Version 2.1 (perf + système).
     </footer>
   </div>
 
@@ -219,18 +218,22 @@ TEMPLATE = """
       return s + "s";
     }
 
-    function parseHexToBigInt(h) {
-      if (!h) return null;
-      try {
-        return BigInt(h);
-      } catch (e) {
-        return null;
-      }
+    function computeAvg(arr) {
+      if (!arr || arr.length === 0) return 0;
+      let sum = 0;
+      for (let v of arr) sum += v;
+      return sum / arr.length;
+    }
+
+    function computePeak(arr) {
+      if (!arr || arr.length === 0) return 0;
+      return Math.max(...arr);
     }
 
     function updateDashboard(data) {
       const gen = data.generator || {};
       const puz = data.puzzle || {};
+      const system = data.system || {};
 
       // === GENERATOR ===
       document.getElementById("gen-keys").textContent   = formatNumber(gen.keys_tested);
@@ -260,88 +263,14 @@ TEMPLATE = """
       const totalPuz = puz.total_keys_tested || 0;
       const globalTotal = totalGen + totalPuz;
 
-      document.getElementById("global-total-keys").textContent = formatNumber(globalTotal);
-      document.getElementById("global-speed-gen").textContent  =
-        (gen.speed_keys_per_sec || 0).toFixed(2) + " keys/s";
-      document.getElementById("global-speed-puz").textContent  =
-        (puz.keys_per_second || 0).toFixed(2) + " keys/s";
-
-      // === RANGE BAR & COVERAGE (PUZZLE) ===
-      const startHex = puz.range_start_hex;
-      const endHex   = puz.range_end_hex;
-      const lastHex  = puz.last_key_hex;
-
-      document.getElementById("puz-range-min").textContent = startHex || "min";
-      document.getElementById("puz-range-max").textContent = endHex   || "max";
-
-      const startBI = parseHexToBigInt(startHex);
-      const endBI   = parseHexToBigInt(endHex);
-      const lastBI  = parseHexToBigInt(lastHex);
-
-      let posPercent = null;
-      let covSession = null;
-      let covGlobal  = null;
-      let etaText    = "-";
-
-      if (startBI !== null && endBI !== null && endBI > startBI) {
-        const rangeSize = endBI - startBI + 1n;
-
-        // Position de la dernière clé
-        if (lastBI !== null) {
-          const pos = lastBI - startBI;
-          let ratioPos = Number(pos * 1000000n / rangeSize) / 1000000;
-          if (ratioPos < 0) ratioPos = 0;
-          if (ratioPos > 1) ratioPos = 1;
-          posPercent = ratioPos * 100;
-        }
-
-        // Couverture session
-        const sessionKeys = BigInt(puz.keys_checked || 0);
-        const totalKeys   = BigInt(puz.total_keys_tested || 0);
-
-        covSession = Number(sessionKeys * 100000000n / rangeSize) / 1000000;
-        covGlobal  = Number(totalKeys   * 100000000n / rangeSize) / 1000000;
-
-        // ETA global (temps pour 100% à la vitesse actuelle)
-        const speed = puz.keys_per_second || 0;
-        if (speed > 0) {
-          let remaining = rangeSize - totalKeys;
-          if (remaining < 0n) remaining = 0n;
-          let remainingSec = Number(remaining) / speed;
-          if (!isFinite(remainingSec) || remainingSec < 0) {
-            etaText = "inatteignable";
-          } else {
-            etaText = formatSeconds(remainingSec);
-          }
-        }
-      }
-
-      // Position curseur
-      const marker = document.getElementById("puz-range-marker");
-      const posText = document.getElementById("puz-range-pos-text");
-      if (posPercent === null) {
-        marker.style.left = "0%";
-        posText.textContent = "Position inconnue";
-      } else {
-        marker.style.left = posPercent.toFixed(6) + "%";
-        posText.textContent = "Position dans le range : " + posPercent.toFixed(6) + " %";
-      }
-
-      // Couverture & ETA
-      document.getElementById("puz-coverage-session").textContent =
-        covSession === null ? "-" : covSession.toFixed(8) + " %";
-      document.getElementById("puz-coverage-global").textContent =
-        covGlobal === null ? "-" : covGlobal.toFixed(8) + " %";
-      document.getElementById("puz-eta-full").textContent = etaText;
-
-      // === SPEED HISTORY CHART ===
+      // Historique vitesses (pour moyenne/pic)
       const nowLabel = new Date().toLocaleTimeString();
-      const genSpeed = gen.speed_keys_per_sec || 0;
-      const puzSpeed = puz.keys_per_second    || 0;
+      const genSpeedNow = gen.speed_keys_per_sec || 0;
+      const puzSpeedNow = puz.keys_per_second    || 0;
 
       speedHistoryLabels.push(nowLabel);
-      speedHistoryGen.push(genSpeed);
-      speedHistoryPuz.push(puzSpeed);
+      speedHistoryGen.push(genSpeedNow);
+      speedHistoryPuz.push(puzSpeedNow);
 
       if (speedHistoryLabels.length > MAX_POINTS) {
         speedHistoryLabels.shift();
@@ -349,6 +278,48 @@ TEMPLATE = """
         speedHistoryPuz.shift();
       }
 
+      const genAvg  = computeAvg(speedHistoryGen);
+      const genPeak = computePeak(speedHistoryGen);
+      const puzAvg  = computeAvg(speedHistoryPuz);
+      const puzPeak = computePeak(speedHistoryPuz);
+
+      document.getElementById("global-total-keys").textContent =
+        formatNumber(globalTotal);
+
+      document.getElementById("global-speed-gen-current").textContent =
+        genSpeedNow.toFixed(2) + " keys/s";
+      document.getElementById("global-speed-gen-avg").textContent =
+        genAvg.toFixed(2) + " keys/s";
+      document.getElementById("global-speed-gen-peak").textContent =
+        genPeak.toFixed(2) + " keys/s";
+
+      document.getElementById("global-speed-puz-current").textContent =
+        puzSpeedNow.toFixed(2) + " keys/s";
+      document.getElementById("global-speed-puz-avg").textContent =
+        puzAvg.toFixed(2) + " keys/s";
+      document.getElementById("global-speed-puz-peak").textContent =
+        puzPeak.toFixed(2) + " keys/s";
+
+      // === SYSTEM INFO ===
+      const cpu = system.cpu_percent;
+      const ramUsed = system.ram_used_gb;
+      const ramTotal = system.ram_total_gb;
+      const temp = system.temp_c;
+
+      document.getElementById("sys-cpu").textContent =
+        (cpu === null || cpu === undefined) ? "-" : cpu.toFixed(1) + " %";
+
+      if (ramUsed === null || ramUsed === undefined || ramTotal === null || ramTotal === undefined) {
+        document.getElementById("sys-ram").textContent = "-";
+      } else {
+        document.getElementById("sys-ram").textContent =
+          ramUsed.toFixed(1) + " / " + ramTotal.toFixed(1) + " GB";
+      }
+
+      document.getElementById("sys-temp").textContent =
+        (temp === null || temp === undefined) ? "-" : temp.toFixed(1) + " °C";
+
+      // === SPEED HISTORY CHART ===
       const ctx = document.getElementById("speedChart").getContext("2d");
       if (!speedChart) {
         speedChart = new Chart(ctx, {
@@ -411,7 +382,6 @@ TEMPLATE = """
 </html>
 """
 
-
 def read_json(path: str):
     try:
         with open(path, "r", encoding="utf-8") as f:
@@ -419,26 +389,52 @@ def read_json(path: str):
     except Exception:
         return None
 
+def get_system_info():
+    if not PSUTIL_AVAILABLE:
+        return {}
+    try:
+        cpu = psutil.cpu_percent(interval=0.1)
+        vm = psutil.virtual_memory()
+        ram_used_gb = vm.used / (1024**3)
+        ram_total_gb = vm.total / (1024**3)
+
+        temp_c = None
+        if hasattr(psutil, "sensors_temperatures"):
+            temps = psutil.sensors_temperatures()
+            for key in ["coretemp", "k10temp", "cpu-thermal"]:
+                if key in temps and temps[key]:
+                    temp_c = temps[key][0].current
+                    break
+
+        return {
+            "cpu_percent": cpu,
+            "ram_percent": vm.percent,
+            "ram_used_gb": ram_used_gb,
+            "ram_total_gb": ram_total_gb,
+            "temp_c": temp_c,
+        }
+    except Exception:
+        return {}
 
 @app.route("/api/status")
 def api_status():
     gen = read_json(GEN_STATUS)
     puz = read_json(PUZ_STATUS)
+    sys_info = get_system_info()
     return jsonify(
         {
             "generator": gen or {},
             "puzzle": puz or {},
+            "system": sys_info,
             "server_time": time.time(),
         }
     )
-
 
 @app.route("/")
 def index():
     return render_template_string(TEMPLATE)
 
-
 if __name__ == "__main__":
-    print(f"\n[Dashboard] Generator status: {GEN_STATUS}")
-    print(f"[Dashboard] Puzzle status: {PUZ_STATUS}\n")
+    print(f"\\n[Dashboard] Generator status: {GEN_STATUS}")
+    print(f"[Dashboard] Puzzle status: {PUZ_STATUS}\\n")
     app.run(host="0.0.0.0", port=5000)
