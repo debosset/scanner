@@ -5,18 +5,13 @@ import os
 
 app = Flask(__name__)
 
-# Detect paths automatically
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 PARENT_DIR = os.path.dirname(BASE_DIR)
 
 GEN_STATUS = os.path.join(PARENT_DIR, "generator", "status.json")
 PUZ_STATUS = os.path.join(PARENT_DIR, "puzzleweb", "status.json")
 
-# Fallback to /opt/ if files not found
-if not os.path.exists(GEN_STATUS):
-    GEN_STATUS = "/opt/generator/status.json"
-if not os.path.exists(PUZ_STATUS):
-    PUZ_STATUS = "/opt/puzzleweb/status.json"
+
 
 TEMPLATE = """
 <!doctype html>
