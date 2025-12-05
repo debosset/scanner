@@ -19,7 +19,7 @@ import sys
 import time
 import json
 import os
-from utils_optimized import (
+from utils import (
     generate_puzzle71_batch,
     private_key_to_btc_address,
     check_btc_balance,
@@ -82,7 +82,7 @@ def write_status(keys_checked: int, total_keys: int, last_key_hex: str,
         eta_seconds = 0
     
     data = {
-        "script": "puzzle_optimized",
+        "script": "puzzle",
         "target_address": TARGET_ADDRESS,
         "target_btc": TARGET_BTC,
         "range_start_hex": f"0x{PUZZLE_71_MIN:x}",

@@ -25,7 +25,7 @@ import aiohttp
 from typing import List, Dict, Tuple
 from collections import deque
 
-from utils_optimized import (
+from utils import (
     generate_mnemonic,
     derive_keys,
     check_eth_balance_async,
@@ -103,7 +103,7 @@ def write_status(total_checked: int, eth_hits: int, btc_hits: int,
     total_global = total_start + total_checked
     
     data = {
-        "script": "generator_optimized",
+        "script": "generator",
         "keys_tested": total_checked,
         "total_keys_tested": total_global,
         "eth_hits": eth_hits,

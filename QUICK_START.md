@@ -4,7 +4,7 @@
 
 ```bash
 # 1. Installer les dépendances optimisées
-pip install -r requirements_optimized.txt
+pip install -r requirements.txt
 
 # 2. (Optionnel) Pour de meilleures performances sur Unix
 pip install uvloop aiodns
@@ -21,7 +21,7 @@ cd generator
 python crypto_balance_checker.py
 
 # Version optimisée (40-60 keys/sec) ⚡
-python crypto_balance_checker_optimized.py
+python crypto_balance_checker.py
 ```
 
 ### Puzzle #71 (BTC Hunter)
@@ -33,7 +33,7 @@ cd puzzleweb
 python puzzle_btc.py
 
 # Version optimisée (1000-2000 keys/sec) ⚡
-python puzzle_btc_optimized.py
+python puzzle_btc.py
 ```
 
 ### Dashboard
@@ -45,7 +45,7 @@ cd dashboard
 python app.py
 
 # Version optimisée avec détection automatique des chemins ⚡
-python app_optimized.py
+python app.py
 
 # Ouvrir dans le navigateur: http://localhost:5000
 ```
@@ -61,7 +61,7 @@ python app_optimized.py
 
 ### Generator Optimisé
 
-Éditer `generator/crypto_balance_checker_optimized.py` (lignes 30-35):
+Éditer `generator/crypto_balance_checker.py` (lignes 30-35):
 
 ```python
 BATCH_SIZE = 20          # Clés par batch (10-50)
@@ -72,7 +72,7 @@ STATUS_INTERVAL = 30.0   # Mise à jour status (10-60s)
 
 ### Puzzle Optimisé
 
-Éditer `puzzleweb/puzzle_btc_optimized.py` (lignes 30-32):
+Éditer `puzzleweb/puzzle_btc.py` (lignes 30-32):
 
 ```python
 BATCH_SIZE = 50           # Clés par batch (20-100)
@@ -131,7 +131,7 @@ BATCH_SIZE = 100
 
 ### Erreur: Module not found
 ```bash
-pip install -r requirements_optimized.txt
+pip install -r requirements.txt
 ```
 
 ### Performance faible
