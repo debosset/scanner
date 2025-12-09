@@ -3,17 +3,14 @@
 
 """
 Optimized Cryptocurrency Balance Checker (ETH + BTC)
-Version 2.0 - Async I/O, Batch Processing, Multiprocessing
+Version 3.0 - Avec vérification d'adresses Bitcoin connues en mémoire
 
-Optimizations:
-1. Async I/O for parallel ETH/BTC checking (2x faster)
-2. Batch processing for multiple keys
-3. Buffered I/O for logs and status (99% less disk writes)
-4. Intelligent rate limiting (token bucket)
-5. Address caching (LRU, 10K addresses)
-6. Multiprocessing support (2-4 workers)
+Nouvelles fonctionnalités:
+1. Vérification des adresses BTC contre une liste connue (set en mémoire)
+2. Double logging: match d'adresse + balance confirmée
+3. Optimisations async existantes maintenues
 
-Expected performance: 40-60 keys/sec (vs 4 keys/sec original)
+Performance attendue: 100-500 keys/sec (pas d'appel API si pas de match)
 """
 
 import sys
@@ -22,7 +19,7 @@ import json
 import os
 import asyncio
 import aiohttp
-from typing import List, Dict, Tuple
+from typing import List, Dict, Tuple, Set, Optional
 from collections import deque
 
 from utils import (
@@ -34,17 +31,19 @@ from utils import (
     AddressCache,
 )
 from config import API_RATE_LIMIT
+from btc_address_loader import initialize_btc_address_set
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 LOG_PATH = os.path.join(BASE_DIR, "found_funds.log")
+MATCH_LOG_PATH = os.path.join(BASE_DIR, "address_matches.log")  # Nouveau: log des matchs
 STATUS_PATH = os.path.join(BASE_DIR, "status.json")
 FAKE_HIT_MARKER = os.path.join(BASE_DIR, "fake_hit_done")
 TOTAL_KEYS_FILE = os.path.join(BASE_DIR, "total_keys_generator.json")
 
 # Optimization parameters
-BATCH_SIZE = 10          # Keys per batch
+BATCH_SIZE = 20          # Keys per batch (augmenté car moins d'appels API)
 BUFFER_SIZE = 100        # Log buffer size
-CACHE_SIZE = 5000       # Address cache size
+CACHE_SIZE = 10000       # Address cache size
 STATUS_INTERVAL = 30.0   # Status update interval (seconds)
 
 
@@ -72,7 +71,7 @@ class LogBuffer:
                 while self.buffer:
                     f.write(self.buffer.popleft())
         except Exception as e:
-            print(f"Error flushing log buffer: {e}")
+            print(f"Erreur lors du flush du buffer: {e}")
 
 
 def load_total_keys() -> int:
@@ -95,7 +94,7 @@ def save_total_keys(total: int):
     os.replace(tmp, TOTAL_KEYS_FILE)
 
 
-def write_status(total_checked: int, eth_hits: int, btc_hits: int,
+def write_status(total_checked: int, eth_hits: int, btc_hits: int, btc_matches: int,
                 eth_addr: str, btc_addr: str, start_time: float, total_start: int):
     """Write status to JSON file"""
     elapsed = time.time() - start_time
@@ -108,6 +107,7 @@ def write_status(total_checked: int, eth_hits: int, btc_hits: int,
         "total_keys_tested": total_global,
         "eth_hits": eth_hits,
         "btc_hits": btc_hits,
+        "btc_address_matches": btc_matches,  # Nouveau compteur
         "last_eth_address": eth_addr,
         "last_btc_address": btc_addr,
         "speed_keys_per_sec": speed,
@@ -158,30 +158,61 @@ def generate_key_batch(batch_size: int) -> List[Dict]:
                 "btc_priv": keys["btc"]["private_key"],
             })
         except Exception as e:
-            print(f"Error generating key: {e}")
+            print(f"Erreur lors de la génération de clé: {e}")
             continue
     return batch
 
 
 async def process_batch(batch: List[Dict], session: aiohttp.ClientSession,
                        rate_limiter: RateLimiter, cache: AddressCache,
-                       log_buffer: LogBuffer) -> Tuple[int, int]:
-    """Process a batch of keys and check balances in parallel"""
+                       log_buffer: LogBuffer, match_log_buffer: LogBuffer,
+                       btc_known_addresses: Set[str]) -> Tuple[int, int, int]:
+    """
+    Process a batch of keys and check balances in parallel
+    
+    Returns:
+        Tuple[eth_hits, btc_hits, btc_matches]
+    """
     eth_hits = 0
     btc_hits = 0
+    btc_matches = 0
     
     for key_data in batch:
-        # Check both ETH and BTC in parallel
+        # Vérifier d'abord si l'adresse BTC est dans la liste connue
+        btc_is_known = key_data["btc_addr"] in btc_known_addresses
+        
+        if btc_is_known:
+            btc_matches += 1
+            # LOG 1: Match d'adresse trouvé
+            match_line = (
+                f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] "
+                f"BTC_ADDRESS_MATCH "
+                f"ADDR={key_data['btc_addr']} "
+                f"PRIV={key_data['btc_priv']} "
+                f"MNEMONIC=\"{key_data['mnemonic']}\"\n"
+            )
+            match_log_buffer.add(match_line)
+            print(f"\n!!! ADRESSE BTC CONNUE TROUVÉE !!! {key_data['btc_addr']}\n", flush=True)
+        
+        # Vérifier les balances
+        # ETH: toujours vérifier
+        # BTC: vérifier seulement si l'adresse est connue (optimisation)
         eth_task = check_eth_balance_async(
             session, key_data["eth_addr"], key_data["eth_priv"], rate_limiter, cache
         )
-        btc_task = check_btc_balance_async(
-            session, key_data["btc_addr"], key_data["btc_priv"], rate_limiter, cache
-        )
         
-        eth_balance, btc_balance = await asyncio.gather(eth_task, btc_task)
+        if btc_is_known:
+            # Vérifier la balance BTC seulement si l'adresse est connue
+            btc_task = check_btc_balance_async(
+                session, key_data["btc_addr"], key_data["btc_priv"], rate_limiter, cache
+            )
+            eth_balance, btc_balance = await asyncio.gather(eth_task, btc_task)
+        else:
+            # Pas besoin de vérifier la balance BTC si l'adresse n'est pas connue
+            eth_balance = await eth_task
+            btc_balance = None
         
-        # Log if funds found
+        # LOG 2: Balance confirmée > 0
         if eth_balance and eth_balance > 0:
             eth_hits += 1
             line = (
@@ -191,7 +222,7 @@ async def process_batch(batch: List[Dict], session: aiohttp.ClientSession,
                 f"MNEMONIC=\"{key_data['mnemonic']}\"\n"
             )
             log_buffer.add(line)
-            print(f"\n!!! ETH FUNDS FOUND !!! {eth_balance:.8f} ETH at {key_data['eth_addr']}\n", flush=True)
+            print(f"\n!!! FONDS ETH TROUVÉS !!! {eth_balance:.8f} ETH at {key_data['eth_addr']}\n", flush=True)
         
         if btc_balance and btc_balance > 0:
             btc_hits += 1
@@ -202,41 +233,52 @@ async def process_batch(batch: List[Dict], session: aiohttp.ClientSession,
                 f"MNEMONIC=\"{key_data['mnemonic']}\"\n"
             )
             log_buffer.add(line)
-            print(f"\n!!! BTC FUNDS FOUND !!! {btc_balance:.8f} BTC at {key_data['btc_addr']}\n", flush=True)
+            print(f"\n!!! FONDS BTC TROUVÉS !!! {btc_balance:.8f} BTC at {key_data['btc_addr']}\n", flush=True)
     
-    return eth_hits, btc_hits
+    return eth_hits, btc_hits, btc_matches
 
 
 async def main_async():
     """Main async function"""
     print("\n" + "="*60, flush=True)
-    print("=== Optimized Cryptocurrency Balance Checker v2.0 ===", flush=True)
+    print("=== Optimized Cryptocurrency Balance Checker v3.0 ===", flush=True)
     print("="*60, flush=True)
-    print("\nOptimizations:", flush=True)
-    print("  • Async I/O (parallel ETH + BTC checks)", flush=True)
-    print("  • Batch processing (20 keys per batch)", flush=True)
-    print("  • Buffered logging (100 entries)", flush=True)
-    print("  • Address caching (10,000 addresses)", flush=True)
-    print("  • Intelligent rate limiting", flush=True)
-    print(f"\nExpected performance: 40-60 keys/sec (vs 4 keys/sec original)\n", flush=True)
-    print("Running without limit – press Ctrl+C to stop.", flush=True)
-    print("Any REAL funds found will be logged to 'found_funds.log'\n", flush=True)
+    print("\nNouvelles fonctionnalités:", flush=True)
+    print("  • Vérification d'adresses BTC connues (set en mémoire)", flush=True)
+    print("  • Double logging: match + balance confirmée", flush=True)
+    print("  • Optimisations async maintenues", flush=True)
+    print(f"\nPerformance attendue: 100-500 keys/sec\n", flush=True)
+    
+    # Initialiser le set d'adresses Bitcoin connues
+    print("[Info] Chargement de la liste d'adresses Bitcoin connues...", flush=True)
+    try:
+        btc_known_addresses = initialize_btc_address_set()
+    except Exception as e:
+        print(f"[Erreur] Impossible de charger les adresses Bitcoin: {e}", flush=True)
+        print("[Info] Continuation sans vérification d'adresses connues...", flush=True)
+        btc_known_addresses = set()
+    
+    print("\nAppuyez sur Ctrl+C pour arrêter.", flush=True)
+    print("Les fonds trouvés seront loggés dans 'found_funds.log'", flush=True)
+    print("Les matchs d'adresses seront loggés dans 'address_matches.log'\n", flush=True)
     
     # Write fake test hit
     write_fake_test_hit_once()
     
     # Load previous progress
     total_start = load_total_keys()
-    print(f"[Info] Total keys already tested: {total_start:,}\n", flush=True)
+    print(f"[Info] Total de clés déjà testées: {total_start:,}\n", flush=True)
     
     # Initialize components
     rate_limiter = RateLimiter(API_RATE_LIMIT)
     cache = AddressCache(CACHE_SIZE)
     log_buffer = LogBuffer(LOG_PATH, BUFFER_SIZE)
+    match_log_buffer = LogBuffer(MATCH_LOG_PATH, BUFFER_SIZE)
     
     total_checked = 0
     eth_hits = 0
     btc_hits = 0
+    btc_matches = 0
     start_time = time.time()
     last_status_time = 0.0
     
@@ -254,14 +296,16 @@ async def main_async():
                     continue
                 
                 # Process batch
-                batch_eth_hits, batch_btc_hits = await process_batch(
-                    batch, session, rate_limiter, cache, log_buffer
+                batch_eth_hits, batch_btc_hits, batch_btc_matches = await process_batch(
+                    batch, session, rate_limiter, cache, log_buffer, 
+                    match_log_buffer, btc_known_addresses
                 )
                 
                 # Update counters
                 total_checked += len(batch)
                 eth_hits += batch_eth_hits
                 btc_hits += batch_btc_hits
+                btc_matches += batch_btc_matches
                 
                 # Update last addresses
                 if batch:
@@ -278,12 +322,13 @@ async def main_async():
                     speed = total_checked / elapsed if elapsed > 0 else 0.0
                     
                     print("\n" + "-"*60, flush=True)
-                    print(f"Keys tested (session):  {total_checked:,}", flush=True)
-                    print(f"Total keys tested:      {total_start + total_checked:,}", flush=True)
-                    print(f"ETH hits:               {eth_hits}", flush=True)
-                    print(f"BTC hits:               {btc_hits}", flush=True)
-                    print(f"Speed:                  {speed:.2f} keys/sec", flush=True)
-                    print(f"Elapsed time:           {elapsed/60:.2f} minutes", flush=True)
+                    print(f"Clés testées (session):     {total_checked:,}", flush=True)
+                    print(f"Total de clés testées:      {total_start + total_checked:,}", flush=True)
+                    print(f"ETH hits (balance > 0):     {eth_hits}", flush=True)
+                    print(f"BTC hits (balance > 0):     {btc_hits}", flush=True)
+                    print(f"BTC matchs (adresse connue): {btc_matches}", flush=True)
+                    print(f"Vitesse:                    {speed:.2f} keys/sec", flush=True)
+                    print(f"Temps écoulé:               {elapsed/60:.2f} minutes", flush=True)
                     print("-"*60 + "\n", flush=True)
                 
                 # Update status file every 30s
@@ -295,24 +340,28 @@ async def main_async():
                         total_checked,
                         eth_hits,
                         btc_hits,
+                        btc_matches,
                         last_eth_addr,
                         last_btc_addr,
                         start_time,
                         total_start,
                     )
                     log_buffer.flush()
+                    match_log_buffer.flush()
                     last_status_time = now
                 
                 # Small sleep to prevent CPU overload
-                await asyncio.sleep(0.05)
+                await asyncio.sleep(0.01)
     
     except KeyboardInterrupt:
-        print("\n\nReceived Ctrl+C, stopping gracefully...", flush=True)
+        print("\n\nCtrl+C reçu, arrêt en cours...", flush=True)
         log_buffer.flush()
+        match_log_buffer.flush()
         write_status(
             total_checked,
             eth_hits,
             btc_hits,
+            btc_matches,
             last_eth_addr,
             last_btc_addr,
             start_time,
@@ -320,8 +369,9 @@ async def main_async():
         )
         return 0
     except Exception as e:
-        print(f"\nFatal error occurred: {e}", flush=True)
+        print(f"\nErreur fatale: {e}", flush=True)
         log_buffer.flush()
+        match_log_buffer.flush()
         return 1
 
 
